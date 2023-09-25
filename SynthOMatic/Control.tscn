@@ -1,0 +1,1717 @@
+[gd_scene load_steps=19 format=2]
+
+[ext_resource path="res://Bass/BassMeasure.gd" type="Script" id=1]
+[ext_resource path="res://80sKit/Drums.gd" type="Script" id=2]
+[ext_resource path="res://Control.gd" type="Script" id=3]
+[ext_resource path="res://SynthChord/SynthChord.gd" type="Script" id=4]
+[ext_resource path="res://Bass.gd" type="Script" id=5]
+[ext_resource path="res://Drums.gd" type="Script" id=6]
+[ext_resource path="res://SynthChord.gd" type="Script" id=7]
+[ext_resource path="res://Metronome_120bpm.wav" type="AudioStream" id=8]
+
+[sub_resource type="Shader" id=1]
+code = "/*
+	Original shader by mrange (https://www.shadertoy.com/view/csfXzN)
+	Godot 3.5 port with customizable parameters by PmkExpert
+	As much as possible of the original has been kept, including comments
+	
+	MIT License
+
+*/
+
+// License CC0: Sea and moon
+//  Tinkering with the colors of an old shaders to make it a better fit for windows terminal
+
+shader_type canvas_item;
+
+const float PI = 3.141592654;
+//const float TAU = 6.283185308;
+
+//Kept the original names, but they mostly change the waves' speed
+uniform float gravity : hint_range(0.0,25.0) = 1.0;
+uniform float waterTension : hint_range(0.0,10.0) = 0.01;
+
+//Generally, the shader is dark, so some colors have less effect than others overall
+uniform vec4 skyCol1 : hint_color = vec4(0.6, 0.35, 0.3, 1.0);
+uniform vec4 skyCol2 : hint_color = vec4(1.0, 0.3, 0.3, 1.0);
+uniform vec4 sunCol1 : hint_color = vec4(1.0, 0.5, 0.4, 1.0);
+uniform vec4 sunCol2 : hint_color = vec4(1.0, 0.8, 0.8, 1.0);
+uniform vec4 seaCol1 : hint_color = vec4(0.1, 0.2, 0.2, 1.0);
+uniform vec4 seaCol2 : hint_color = vec4(0.2, 0.9, 0.6, 1.0);
+
+//New uniforms made of values from the code for easier customization
+uniform float sunPosX : hint_range(-1.5,1.5) = 0.0; //The celestial body's position
+uniform float sunPosY : hint_range(-0.6,0.4) = 0.06; //The celestial body's altitude
+uniform float Zoom : hint_range(0.5,20.0) = 2.5; //How much close is the horizon
+uniform float sunShine : hint_range(0.1,100.0) = 1.0; //The amount of light emitted
+uniform float sunSize : hint_range(0.1,100.0) = 1.0; //Can make it appear better under sea level than sunPos
+uniform int seaNoise : hint_range(1,20) = 8; //Makes the sea appear differently
+uniform int crestSize : hint_range(1,20) = 4; //How big the waves' crests look
+uniform float seaLevel : hint_range(-0.5,0.5) = -0.1; //The horizon's level
+//Some other values in the code can be changed for different effects, but their behavior is less predictable
+
+// License: Unknown, author: Unknown, found: don't remember
+float tanh_approx(float x) {
+  //  Found this somewhere on the interwebs
+  //  return tanh(x);
+  float x2 = x*x;
+  return clamp(x*(27.0 + x2)/(27.0+9.0*x2), -1.0, 1.0);
+}
+
+vec2 wave(in float t, in float a, in float w, in float p) {
+  float x = t;
+  float y = a*sin(t*w + p);
+  return vec2(x, y);
+}
+
+vec2 dwave(in float t, in float a, in float w, in float p) {
+  float dx = 1.0;
+  float dy = a*w*cos(t*w + p);
+  return vec2(dx, dy);
+}
+
+vec2 gravityWave(in float t, in float a, in float k, in float h) {
+  float w = sqrt(gravity*k*tanh_approx(k*h));
+  return wave(t, a ,k, w*TIME);
+}
+
+vec2 capillaryWave(in float t, in float a, in float k, in float h) {
+  float w = sqrt((gravity*k + waterTension*k*k*k)*tanh_approx(k*h));
+  return wave(t, a, k, w*TIME);
+}
+
+vec2 gravityWaveD(in float t, in float a, in float k, in float h) {
+  float w = sqrt(gravity*k*tanh_approx(k*h));
+  return dwave(t, a, k, w*TIME);
+}
+
+vec2 capillaryWaveD(in float t, in float a, in float k, in float h) {
+  float w = sqrt((gravity*k + waterTension*k*k*k)*tanh_approx(k*h));
+  return dwave(t, a, k, w*TIME);
+}
+
+void mrot(inout vec2 p, in float a) {
+  float c = cos(a);
+  float s = sin(a);
+  p = vec2(c*p.x + s*p.y, -s*p.x + c*p.y);
+}
+
+vec4 sea(in vec2 p, in float ia) {
+  float y = 0.0;
+  vec3 d = vec3(0.0);
+
+  int maxIter = seaNoise;
+  int midIter = crestSize;
+
+  float kk = 1.0/1.3;
+  float aa = 1.0/(kk*kk);
+  float k = 1.0*pow(kk, -float(maxIter) + 1.0);
+  float a = ia*0.25*pow(aa, -float(maxIter) + 1.0);
+
+  float h = 25.0;
+  p *= 0.5;
+  
+  vec2 waveDir = vec2(0.0, 1.0);
+
+  for (int i = midIter; i < maxIter; ++i) {
+    float t = dot(-waveDir, p) + float(i);
+    y += capillaryWave(t, a, k, h).y;
+    vec2 dw = capillaryWaveD(-t, a, k, h);
+    
+    d += vec3(waveDir.x, dw.y, waveDir.y);
+
+    mrot(waveDir, PI/3.0);
+
+    k *= kk;
+    a *= aa;
+  }
+  
+  waveDir = vec2(0.0, 1.0);
+
+  for (int i = 0; i < midIter; ++i) {
+    float t = dot(waveDir, p) + float(i);
+    y += gravityWave(t, a, k, h).y;
+    vec2 dw = gravityWaveD(t, a, k, h);
+    
+    vec2 d2 = vec2(0.0, dw.x);
+    
+    d += vec3(waveDir.x, dw.y, waveDir.y);
+
+    mrot(waveDir, -step(2.0, float(i)));
+
+    k *= kk;
+    a *= aa;
+  }
+
+  vec3 t = normalize(d);
+  vec3 nxz = normalize(vec3(t.z, 0.0, -t.x));
+  vec3 nor = cross(t, nxz);
+
+  return vec4(y, nor);
+}
+
+vec3 sunDirection() {
+  vec3 dir = normalize(vec3(sunPosX, sunPosY, 1));
+  return dir;
+}
+
+vec3 skyColor(in vec3 rd) {
+  //Added code to change the colors to be modifiable shader params
+  vec3 skyCol1_ = skyCol1.xyz * 0.5;
+  vec3 skyCol2_ = skyCol2.xyz * 0.5;
+  
+  vec3 sunDir = sunDirection();
+  float sunDot = max(dot(rd, sunDir), 0.0);
+  vec3 final = vec3(0.0);
+  final += mix(skyCol1_, skyCol2_, rd.y);
+  final += 0.5*sunCol1.rgb*pow(sunDot, 90.0 / sunShine);
+  final += 4.0*sunCol2.rgb*pow(sunDot, 900.0 / sunSize);
+  return final;
+}
+
+vec3 render(in vec3 ro, in vec3 rd) {
+  //Added code to change the colors to be modifiable shader params
+  vec3 seaCol1_ = seaCol1.rgb * 0.2;
+  vec3 seaCol2_ = seaCol2.rgb * 0.5;
+  
+  vec3 col = vec3(0.0);
+
+  float dsea = (0.0 - ro.y)/rd.y;
+  
+  vec3 sunDir = sunDirection();
+  
+  vec3 sky = skyColor(rd);
+  
+  if (dsea > 0.0) {
+    vec3 p = ro + dsea*rd;
+    vec4 s = sea(p.xz, 1.0);
+    float h = s.x;    
+    vec3 nor = s.yzw;
+    nor = mix(nor, vec3(0.0, 1.0, 0.0), smoothstep(0.0, 200.0, dsea));
+
+    float fre = clamp(1.0 - dot(-nor,rd), 0.0, 1.0);
+    fre = fre*fre*fre;
+    float dif = mix(0.25, 1.0, max(dot(nor,sunDir), 0.0));
+    
+    vec3 refl = skyColor(reflect(rd, nor));
+    vec3 refr = seaCol1_ + dif*sunCol1.rgb*seaCol2_*0.1; 
+    
+    col = mix(refr, 0.9*refl, fre);
+    
+    float atten = max(1.0 - dot(vec2(dsea),vec2(dsea)) * 0.001, 0.0);
+    col += seaCol2_*(p.y - h) * 2.0 * atten;
+    
+    col = mix(col, sky, 1.0 - exp(-0.01*dsea));
+    
+  } else {
+    col = sky;
+  }
+  
+  return col;
+}
+
+void fragment() {
+  vec2 q = FRAGCOORD.xy/(1.0 / SCREEN_PIXEL_SIZE).xy;
+  vec2 p = -1. + 2. * q;
+  p.x *= (1.0 / SCREEN_PIXEL_SIZE).x/(1.0 / SCREEN_PIXEL_SIZE).y;
+
+  vec3 ro = vec3(0.0, 10.0, 0.0);
+  vec3 ww = normalize(vec3(0.0, seaLevel, 1.0));
+  vec3 uu = normalize(cross( vec3(0.0,1.0,0.0), ww));
+  vec3 vv = normalize(cross(ww,uu));
+  vec3 rd = normalize(p.x*uu + p.y*vv + Zoom*ww);
+
+  vec3 col = render(ro, rd);
+
+  COLOR.rgb = vec3(col);
+  COLOR.a = texture(TEXTURE, UV).a;
+}"
+
+[sub_resource type="ShaderMaterial" id=2]
+shader = SubResource( 1 )
+shader_param/gravity = 1.0
+shader_param/waterTension = 0.01
+shader_param/skyCol1 = Color( 0.898039, 0.415686, 1, 1 )
+shader_param/skyCol2 = Color( 1, 0.0196078, 0.0196078, 1 )
+shader_param/sunCol1 = Color( 0.4, 0.647059, 1, 1 )
+shader_param/sunCol2 = Color( 1, 0.321569, 0.145098, 1 )
+shader_param/seaCol1 = Color( 0, 0.505882, 1, 1 )
+shader_param/seaCol2 = Color( 0.435294, 0.745098, 1, 1 )
+shader_param/sunPosX = 0.0
+shader_param/sunPosY = 0.139
+shader_param/Zoom = 1.535
+shader_param/sunShine = 10.98
+shader_param/sunSize = 4.956
+shader_param/seaNoise = 8
+shader_param/crestSize = 4
+shader_param/seaLevel = -0.338
+
+[sub_resource type="StyleBoxFlat" id=6]
+bg_color = Color( 0, 0, 0, 1 )
+border_width_left = 5
+border_width_top = 5
+border_width_right = 5
+border_width_bottom = 5
+border_color = Color( 0, 0.235294, 0.854902, 1 )
+border_blend = true
+corner_radius_top_left = 15
+corner_radius_top_right = 15
+corner_radius_bottom_right = 15
+corner_radius_bottom_left = 15
+
+[sub_resource type="StyleBoxFlat" id=7]
+bg_color = Color( 0, 0, 0, 1 )
+border_width_left = 5
+border_width_top = 5
+border_width_right = 5
+border_width_bottom = 5
+border_color = Color( 0.854902, 0, 0.815686, 1 )
+border_blend = true
+corner_radius_top_left = 15
+corner_radius_top_right = 15
+corner_radius_bottom_right = 15
+corner_radius_bottom_left = 15
+
+[sub_resource type="StyleBoxFlat" id=5]
+bg_color = Color( 0, 0, 0, 1 )
+border_width_left = 5
+border_width_top = 5
+border_width_right = 5
+border_width_bottom = 5
+border_color = Color( 0.439216, 0.0509804, 0.847059, 1 )
+border_blend = true
+corner_radius_top_left = 15
+corner_radius_top_right = 15
+corner_radius_bottom_right = 15
+corner_radius_bottom_left = 15
+
+[sub_resource type="StyleBoxFlat" id=3]
+bg_color = Color( 0, 0, 0, 1 )
+border_width_left = 5
+border_width_top = 5
+border_width_right = 5
+border_width_bottom = 5
+border_color = Color( 0.0509804, 0.580392, 0.847059, 1 )
+border_blend = true
+corner_radius_top_left = 15
+corner_radius_top_right = 15
+corner_radius_bottom_right = 15
+corner_radius_bottom_left = 15
+
+[sub_resource type="StyleBoxFlat" id=4]
+bg_color = Color( 0, 0, 0, 1 )
+border_width_left = 5
+border_width_top = 5
+border_width_right = 5
+border_width_bottom = 5
+border_color = Color( 0.847059, 0.0509804, 0.827451, 1 )
+border_blend = true
+corner_radius_top_left = 15
+corner_radius_top_right = 15
+corner_radius_bottom_right = 15
+corner_radius_bottom_left = 15
+
+[sub_resource type="StyleBoxLine" id=8]
+color = Color( 0.498039, 0.117647, 0.521569, 1 )
+thickness = 5
+
+[sub_resource type="StyleBoxFlat" id=9]
+bg_color = Color( 0, 0, 0, 1 )
+border_width_left = 5
+border_width_top = 5
+border_width_right = 5
+border_width_bottom = 5
+border_color = Color( 0, 0.694118, 0.854902, 1 )
+border_blend = true
+corner_radius_top_left = 15
+corner_radius_top_right = 15
+corner_radius_bottom_right = 15
+corner_radius_bottom_left = 15
+
+[sub_resource type="StyleBoxFlat" id=10]
+bg_color = Color( 0, 0, 0, 1 )
+border_width_left = 5
+border_width_top = 5
+border_width_right = 5
+border_width_bottom = 5
+border_color = Color( 0.854902, 0, 0, 1 )
+border_blend = true
+corner_radius_top_left = 15
+corner_radius_top_right = 15
+corner_radius_bottom_right = 15
+corner_radius_bottom_left = 15
+
+[node name="Control" type="Control"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource( 3 )
+
+[node name="Panel" type="Panel" parent="."]
+material = SubResource( 2 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="Bass" type="GridContainer" parent="."]
+margin_left = 25.0
+margin_top = 164.0
+margin_right = 1005.0
+margin_bottom = 204.0
+columns = 21
+script = ExtResource( 5 )
+
+[node name="LABEL" type="Button" parent="Bass"]
+margin_right = 100.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 100, 0 )
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 6 )
+custom_styles/pressed = SubResource( 7 )
+custom_styles/normal = SubResource( 6 )
+text = "BASS"
+
+[node name="Bass0" type="Button" parent="Bass"]
+visible = false
+margin_left = 104.0
+margin_right = 144.0
+margin_bottom = 24.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+
+[node name="Bass0" type="AudioStreamPlayer" parent="Bass/Bass0"]
+stream = ExtResource( 8 )
+volume_db = -8.0
+
+[node name="Bass1" type="Button" parent="Bass"]
+margin_left = 104.0
+margin_right = 144.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass1" type="AudioStreamPlayer" parent="Bass/Bass1"]
+volume_db = -8.0
+
+[node name="Bass2" type="Button" parent="Bass"]
+margin_left = 148.0
+margin_right = 188.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass2" type="AudioStreamPlayer" parent="Bass/Bass2"]
+volume_db = -8.0
+
+[node name="Bass3" type="Button" parent="Bass"]
+margin_left = 192.0
+margin_right = 232.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass3" type="AudioStreamPlayer" parent="Bass/Bass3"]
+volume_db = -8.0
+
+[node name="Bass4" type="Button" parent="Bass"]
+margin_left = 236.0
+margin_right = 276.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass4" type="AudioStreamPlayer" parent="Bass/Bass4"]
+volume_db = -8.0
+
+[node name="Bass5" type="Button" parent="Bass"]
+margin_left = 280.0
+margin_right = 320.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass5" type="AudioStreamPlayer" parent="Bass/Bass5"]
+volume_db = -8.0
+
+[node name="Bass6" type="Button" parent="Bass"]
+margin_left = 324.0
+margin_right = 364.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass6" type="AudioStreamPlayer" parent="Bass/Bass6"]
+volume_db = -8.0
+
+[node name="Bass7" type="Button" parent="Bass"]
+margin_left = 368.0
+margin_right = 408.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass7" type="AudioStreamPlayer" parent="Bass/Bass7"]
+volume_db = -8.0
+
+[node name="Bass8" type="Button" parent="Bass"]
+margin_left = 412.0
+margin_right = 452.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass8" type="AudioStreamPlayer" parent="Bass/Bass8"]
+volume_db = -8.0
+
+[node name="Bass9" type="Button" parent="Bass"]
+margin_left = 456.0
+margin_right = 496.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass9" type="AudioStreamPlayer" parent="Bass/Bass9"]
+volume_db = -8.0
+
+[node name="Bass10" type="Button" parent="Bass"]
+margin_left = 500.0
+margin_right = 540.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass10" type="AudioStreamPlayer" parent="Bass/Bass10"]
+volume_db = -8.0
+
+[node name="Bass11" type="Button" parent="Bass"]
+margin_left = 544.0
+margin_right = 584.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass11" type="AudioStreamPlayer" parent="Bass/Bass11"]
+volume_db = -8.0
+
+[node name="Bass12" type="Button" parent="Bass"]
+margin_left = 588.0
+margin_right = 628.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass12" type="AudioStreamPlayer" parent="Bass/Bass12"]
+volume_db = -8.0
+
+[node name="Bass13" type="Button" parent="Bass"]
+margin_left = 632.0
+margin_right = 672.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass13" type="AudioStreamPlayer" parent="Bass/Bass13"]
+volume_db = -8.0
+
+[node name="Bass14" type="Button" parent="Bass"]
+margin_left = 676.0
+margin_right = 716.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass14" type="AudioStreamPlayer" parent="Bass/Bass14"]
+volume_db = -8.0
+
+[node name="Bass15" type="Button" parent="Bass"]
+margin_left = 720.0
+margin_right = 760.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass15" type="AudioStreamPlayer" parent="Bass/Bass15"]
+volume_db = -8.0
+
+[node name="Bass16" type="Button" parent="Bass"]
+margin_left = 764.0
+margin_right = 804.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass16" type="AudioStreamPlayer" parent="Bass/Bass16"]
+volume_db = -8.0
+
+[node name="Bass17" type="Button" parent="Bass"]
+margin_left = 808.0
+margin_right = 848.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass17" type="AudioStreamPlayer" parent="Bass/Bass17"]
+volume_db = -8.0
+
+[node name="Bass18" type="Button" parent="Bass"]
+margin_left = 852.0
+margin_right = 892.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass18" type="AudioStreamPlayer" parent="Bass/Bass18"]
+volume_db = -8.0
+
+[node name="Bass19" type="Button" parent="Bass"]
+margin_left = 896.0
+margin_right = 936.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass19" type="AudioStreamPlayer" parent="Bass/Bass19"]
+volume_db = -8.0
+
+[node name="Bass20" type="Button" parent="Bass"]
+margin_left = 940.0
+margin_right = 980.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 1 )
+
+[node name="Bass20" type="AudioStreamPlayer" parent="Bass/Bass20"]
+volume_db = -8.0
+
+[node name="Drums" type="GridContainer" parent="."]
+margin_left = 25.0
+margin_top = 212.0
+margin_right = 1005.0
+margin_bottom = 252.0
+columns = 21
+script = ExtResource( 6 )
+
+[node name="LABEL" type="Button" parent="Drums"]
+margin_right = 100.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 100, 0 )
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 6 )
+custom_styles/pressed = SubResource( 7 )
+custom_styles/normal = SubResource( 6 )
+text = "DRUMS"
+
+[node name="Drums0" type="Button" parent="Drums"]
+visible = false
+margin_left = 104.0
+margin_right = 144.0
+margin_bottom = 24.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+
+[node name="Drums0" type="AudioStreamPlayer" parent="Drums/Drums0"]
+stream = ExtResource( 8 )
+volume_db = -8.0
+
+[node name="Drums1" type="Button" parent="Drums"]
+margin_left = 104.0
+margin_right = 144.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums1" type="AudioStreamPlayer" parent="Drums/Drums1"]
+volume_db = -8.0
+
+[node name="Drums2" type="Button" parent="Drums"]
+margin_left = 148.0
+margin_right = 188.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums2" type="AudioStreamPlayer" parent="Drums/Drums2"]
+volume_db = -8.0
+
+[node name="Drums3" type="Button" parent="Drums"]
+margin_left = 192.0
+margin_right = 232.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums3" type="AudioStreamPlayer" parent="Drums/Drums3"]
+volume_db = -8.0
+
+[node name="Drums4" type="Button" parent="Drums"]
+margin_left = 236.0
+margin_right = 276.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums4" type="AudioStreamPlayer" parent="Drums/Drums4"]
+volume_db = -8.0
+
+[node name="Drums5" type="Button" parent="Drums"]
+margin_left = 280.0
+margin_right = 320.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums5" type="AudioStreamPlayer" parent="Drums/Drums5"]
+volume_db = -8.0
+
+[node name="Drums6" type="Button" parent="Drums"]
+margin_left = 324.0
+margin_right = 364.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums6" type="AudioStreamPlayer" parent="Drums/Drums6"]
+volume_db = -8.0
+
+[node name="Drums7" type="Button" parent="Drums"]
+margin_left = 368.0
+margin_right = 408.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums7" type="AudioStreamPlayer" parent="Drums/Drums7"]
+volume_db = -8.0
+
+[node name="Drums8" type="Button" parent="Drums"]
+margin_left = 412.0
+margin_right = 452.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums8" type="AudioStreamPlayer" parent="Drums/Drums8"]
+volume_db = -8.0
+
+[node name="Drums9" type="Button" parent="Drums"]
+margin_left = 456.0
+margin_right = 496.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums9" type="AudioStreamPlayer" parent="Drums/Drums9"]
+volume_db = -8.0
+
+[node name="Drums10" type="Button" parent="Drums"]
+margin_left = 500.0
+margin_right = 540.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums10" type="AudioStreamPlayer" parent="Drums/Drums10"]
+volume_db = -8.0
+
+[node name="Drums11" type="Button" parent="Drums"]
+margin_left = 544.0
+margin_right = 584.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums11" type="AudioStreamPlayer" parent="Drums/Drums11"]
+volume_db = -8.0
+
+[node name="Drums12" type="Button" parent="Drums"]
+margin_left = 588.0
+margin_right = 628.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums12" type="AudioStreamPlayer" parent="Drums/Drums12"]
+volume_db = -8.0
+
+[node name="Drums13" type="Button" parent="Drums"]
+margin_left = 632.0
+margin_right = 672.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums13" type="AudioStreamPlayer" parent="Drums/Drums13"]
+volume_db = -8.0
+
+[node name="Drums14" type="Button" parent="Drums"]
+margin_left = 676.0
+margin_right = 716.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums14" type="AudioStreamPlayer" parent="Drums/Drums14"]
+volume_db = -8.0
+
+[node name="Drums15" type="Button" parent="Drums"]
+margin_left = 720.0
+margin_right = 760.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums15" type="AudioStreamPlayer" parent="Drums/Drums15"]
+volume_db = -8.0
+
+[node name="Drums16" type="Button" parent="Drums"]
+margin_left = 764.0
+margin_right = 804.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums16" type="AudioStreamPlayer" parent="Drums/Drums16"]
+volume_db = -8.0
+
+[node name="Drums17" type="Button" parent="Drums"]
+margin_left = 808.0
+margin_right = 848.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums17" type="AudioStreamPlayer" parent="Drums/Drums17"]
+volume_db = -8.0
+
+[node name="Drums18" type="Button" parent="Drums"]
+margin_left = 852.0
+margin_right = 892.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums18" type="AudioStreamPlayer" parent="Drums/Drums18"]
+volume_db = -8.0
+
+[node name="Drums19" type="Button" parent="Drums"]
+margin_left = 896.0
+margin_right = 936.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums19" type="AudioStreamPlayer" parent="Drums/Drums19"]
+volume_db = -8.0
+
+[node name="Drums20" type="Button" parent="Drums"]
+margin_left = 940.0
+margin_right = 980.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 2 )
+
+[node name="Drums20" type="AudioStreamPlayer" parent="Drums/Drums20"]
+volume_db = -8.0
+
+[node name="SynthChord" type="GridContainer" parent="."]
+margin_left = 25.0
+margin_top = 260.0
+margin_right = 1005.0
+margin_bottom = 300.0
+columns = 21
+script = ExtResource( 7 )
+
+[node name="LABEL" type="Button" parent="SynthChord"]
+margin_right = 100.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 100, 0 )
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 6 )
+custom_styles/pressed = SubResource( 7 )
+custom_styles/normal = SubResource( 6 )
+text = "SYNTH"
+
+[node name="SynthChord0" type="Button" parent="SynthChord"]
+visible = false
+margin_left = 104.0
+margin_right = 144.0
+margin_bottom = 24.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+
+[node name="SynthChord0" type="AudioStreamPlayer" parent="SynthChord/SynthChord0"]
+stream = ExtResource( 8 )
+volume_db = -8.0
+
+[node name="SynthChord1" type="Button" parent="SynthChord"]
+margin_left = 104.0
+margin_right = 144.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord1" type="AudioStreamPlayer" parent="SynthChord/SynthChord1"]
+volume_db = -8.0
+
+[node name="SynthChord2" type="Button" parent="SynthChord"]
+margin_left = 148.0
+margin_right = 188.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord2" type="AudioStreamPlayer" parent="SynthChord/SynthChord2"]
+volume_db = -8.0
+
+[node name="SynthChord3" type="Button" parent="SynthChord"]
+margin_left = 192.0
+margin_right = 232.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord3" type="AudioStreamPlayer" parent="SynthChord/SynthChord3"]
+volume_db = -8.0
+
+[node name="SynthChord4" type="Button" parent="SynthChord"]
+margin_left = 236.0
+margin_right = 276.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord4" type="AudioStreamPlayer" parent="SynthChord/SynthChord4"]
+volume_db = -8.0
+
+[node name="SynthChord5" type="Button" parent="SynthChord"]
+margin_left = 280.0
+margin_right = 320.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord5" type="AudioStreamPlayer" parent="SynthChord/SynthChord5"]
+volume_db = -8.0
+
+[node name="SynthChord6" type="Button" parent="SynthChord"]
+margin_left = 324.0
+margin_right = 364.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord6" type="AudioStreamPlayer" parent="SynthChord/SynthChord6"]
+volume_db = -8.0
+
+[node name="SynthChord7" type="Button" parent="SynthChord"]
+margin_left = 368.0
+margin_right = 408.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord7" type="AudioStreamPlayer" parent="SynthChord/SynthChord7"]
+volume_db = -8.0
+
+[node name="SynthChord8" type="Button" parent="SynthChord"]
+margin_left = 412.0
+margin_right = 452.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord8" type="AudioStreamPlayer" parent="SynthChord/SynthChord8"]
+volume_db = -8.0
+
+[node name="SynthChord9" type="Button" parent="SynthChord"]
+margin_left = 456.0
+margin_right = 496.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord9" type="AudioStreamPlayer" parent="SynthChord/SynthChord9"]
+volume_db = -8.0
+
+[node name="SynthChord10" type="Button" parent="SynthChord"]
+margin_left = 500.0
+margin_right = 540.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord10" type="AudioStreamPlayer" parent="SynthChord/SynthChord10"]
+volume_db = -8.0
+
+[node name="SynthChord11" type="Button" parent="SynthChord"]
+margin_left = 544.0
+margin_right = 584.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord11" type="AudioStreamPlayer" parent="SynthChord/SynthChord11"]
+volume_db = -8.0
+
+[node name="SynthChord12" type="Button" parent="SynthChord"]
+margin_left = 588.0
+margin_right = 628.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord12" type="AudioStreamPlayer" parent="SynthChord/SynthChord12"]
+volume_db = -8.0
+
+[node name="SynthChord13" type="Button" parent="SynthChord"]
+margin_left = 632.0
+margin_right = 672.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord13" type="AudioStreamPlayer" parent="SynthChord/SynthChord13"]
+volume_db = -8.0
+
+[node name="SynthChord14" type="Button" parent="SynthChord"]
+margin_left = 676.0
+margin_right = 716.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord14" type="AudioStreamPlayer" parent="SynthChord/SynthChord14"]
+volume_db = -8.0
+
+[node name="SynthChord15" type="Button" parent="SynthChord"]
+margin_left = 720.0
+margin_right = 760.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord15" type="AudioStreamPlayer" parent="SynthChord/SynthChord15"]
+volume_db = -8.0
+
+[node name="SynthChord16" type="Button" parent="SynthChord"]
+margin_left = 764.0
+margin_right = 804.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord16" type="AudioStreamPlayer" parent="SynthChord/SynthChord16"]
+volume_db = -8.0
+
+[node name="SynthChord17" type="Button" parent="SynthChord"]
+margin_left = 808.0
+margin_right = 848.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord17" type="AudioStreamPlayer" parent="SynthChord/SynthChord17"]
+volume_db = -8.0
+
+[node name="SynthChord18" type="Button" parent="SynthChord"]
+margin_left = 852.0
+margin_right = 892.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord18" type="AudioStreamPlayer" parent="SynthChord/SynthChord18"]
+volume_db = -8.0
+
+[node name="SynthChord19" type="Button" parent="SynthChord"]
+margin_left = 896.0
+margin_right = 936.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord19" type="AudioStreamPlayer" parent="SynthChord/SynthChord19"]
+volume_db = -8.0
+
+[node name="SynthChord20" type="Button" parent="SynthChord"]
+margin_left = 940.0
+margin_right = 980.0
+margin_bottom = 36.0
+rect_min_size = Vector2( 40, 0 )
+focus_mode = 0
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 5 )
+custom_styles/pressed = SubResource( 3 )
+custom_styles/normal = SubResource( 4 )
+action_mode = 0
+enabled_focus_mode = 0
+text = "x"
+script = ExtResource( 4 )
+
+[node name="SynthChord20" type="AudioStreamPlayer" parent="SynthChord/SynthChord20"]
+volume_db = -8.0
+
+[node name="PlayBar" type="HSlider" parent="."]
+margin_left = 139.0
+margin_top = 135.0
+margin_right = 987.0
+margin_bottom = 151.0
+custom_styles/slider = SubResource( 8 )
+max_value = 19.0
+editable = false
+scrollable = false
+
+[node name="Play" type="Button" parent="."]
+margin_left = 25.0
+margin_top = 117.0
+margin_right = 125.0
+margin_bottom = 157.0
+rect_min_size = Vector2( 100, 0 )
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 6 )
+custom_styles/pressed = SubResource( 7 )
+custom_styles/normal = SubResource( 9 )
+text = "PLAY"
+
+[node name="Stop" type="Button" parent="."]
+margin_left = 25.0
+margin_top = 308.0
+margin_right = 1005.0
+margin_bottom = 348.0
+rect_min_size = Vector2( 100, 0 )
+size_flags_vertical = 3
+custom_styles/hover = SubResource( 6 )
+custom_styles/pressed = SubResource( 7 )
+custom_styles/normal = SubResource( 10 )
+text = "STOP"
+
+[node name="Label" type="Label" parent="."]
+margin_left = 90.0
+margin_top = 396.0
+margin_right = 929.0
+margin_bottom = 529.0
+text = "WELCOME TO THE SYNTH-O-MATIC. v1
+
+
+To create a random tune, click the buttons to assing them a number from 1-18, or X for Muted.
+
+Each segment lasts exactly 8 seconds, or 4 bars at 120bpm. The key of the instruments is C Minor just in case you were wondering.
+
+I will likely be adding more features to this down the line - if you like it, drop a comment please!
+
+
+
+-Azakaela-"
+align = 1
+
+[connection signal="pressed" from="Bass/LABEL" to="Bass" method="_on_LABEL_pressed"]
+[connection signal="finished" from="Bass/Bass0/Bass0" to="." method="_on_Bass0_finished"]
+[connection signal="pressed" from="Bass/Bass1" to="Bass/Bass1" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass1/Bass1" to="." method="_on_Bass1_finished"]
+[connection signal="pressed" from="Bass/Bass2" to="Bass/Bass2" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass2/Bass2" to="." method="_on_Bass2_finished"]
+[connection signal="pressed" from="Bass/Bass3" to="Bass/Bass3" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass3/Bass3" to="." method="_on_Bass3_finished"]
+[connection signal="pressed" from="Bass/Bass4" to="Bass/Bass4" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass4/Bass4" to="." method="_on_Bass4_finished"]
+[connection signal="pressed" from="Bass/Bass5" to="Bass/Bass5" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass5/Bass5" to="." method="_on_Bass5_finished"]
+[connection signal="pressed" from="Bass/Bass6" to="Bass/Bass6" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass6/Bass6" to="." method="_on_Bass6_finished"]
+[connection signal="pressed" from="Bass/Bass7" to="Bass/Bass7" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass7/Bass7" to="." method="_on_Bass7_finished"]
+[connection signal="pressed" from="Bass/Bass8" to="Bass/Bass8" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass8/Bass8" to="." method="_on_Bass8_finished"]
+[connection signal="pressed" from="Bass/Bass9" to="Bass/Bass9" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass9/Bass9" to="." method="_on_Bass9_finished"]
+[connection signal="pressed" from="Bass/Bass10" to="Bass/Bass10" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass10/Bass10" to="." method="_on_Bass10_finished"]
+[connection signal="pressed" from="Bass/Bass11" to="Bass/Bass11" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass11/Bass11" to="." method="_on_Bass11_finished"]
+[connection signal="pressed" from="Bass/Bass12" to="Bass/Bass12" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass12/Bass12" to="." method="_on_Bass12_finished"]
+[connection signal="pressed" from="Bass/Bass13" to="Bass/Bass13" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass13/Bass13" to="." method="_on_Bass13_finished"]
+[connection signal="pressed" from="Bass/Bass14" to="Bass/Bass14" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass14/Bass14" to="." method="_on_Bass14_finished"]
+[connection signal="pressed" from="Bass/Bass15" to="Bass/Bass15" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass15/Bass15" to="." method="_on_Bass15_finished"]
+[connection signal="pressed" from="Bass/Bass16" to="Bass/Bass16" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass16/Bass16" to="." method="_on_Bass16_finished"]
+[connection signal="pressed" from="Bass/Bass17" to="Bass/Bass17" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass17/Bass17" to="." method="_on_Bass17_finished"]
+[connection signal="pressed" from="Bass/Bass18" to="Bass/Bass18" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass18/Bass18" to="." method="_on_Bass18_finished"]
+[connection signal="pressed" from="Bass/Bass19" to="Bass/Bass19" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass19/Bass19" to="." method="_on_Bass19_finished"]
+[connection signal="pressed" from="Bass/Bass20" to="Bass/Bass20" method="_on_BassMeasure_pressed"]
+[connection signal="finished" from="Bass/Bass20/Bass20" to="." method="_on_Bass20_finished"]
+[connection signal="pressed" from="Drums/LABEL" to="Drums" method="_on_LABEL_pressed"]
+[connection signal="pressed" from="Drums/Drums1" to="Drums/Drums1" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums1/Drums1" to="." method="_on_Drums1_finished"]
+[connection signal="pressed" from="Drums/Drums2" to="Drums/Drums2" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums2/Drums2" to="." method="_on_Drums2_finished"]
+[connection signal="pressed" from="Drums/Drums3" to="Drums/Drums3" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums3/Drums3" to="." method="_on_Drums3_finished"]
+[connection signal="pressed" from="Drums/Drums4" to="Drums/Drums4" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums4/Drums4" to="." method="_on_Drums4_finished"]
+[connection signal="pressed" from="Drums/Drums5" to="Drums/Drums5" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums5/Drums5" to="." method="_on_Drums5_finished"]
+[connection signal="pressed" from="Drums/Drums6" to="Drums/Drums6" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums6/Drums6" to="." method="_on_Drums6_finished"]
+[connection signal="pressed" from="Drums/Drums7" to="Drums/Drums7" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums7/Drums7" to="." method="_on_Drums7_finished"]
+[connection signal="pressed" from="Drums/Drums8" to="Drums/Drums8" method="_on_Drums_pressed"]
+[connection signal="pressed" from="Drums/Drums9" to="Drums/Drums9" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums9/Drums9" to="." method="_on_Drums9_finished"]
+[connection signal="pressed" from="Drums/Drums10" to="Drums/Drums10" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums10/Drums10" to="." method="_on_Drums10_finished"]
+[connection signal="pressed" from="Drums/Drums11" to="Drums/Drums11" method="_on_Drums_pressed"]
+[connection signal="pressed" from="Drums/Drums12" to="Drums/Drums12" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums12/Drums12" to="." method="_on_Drums12_finished"]
+[connection signal="pressed" from="Drums/Drums13" to="Drums/Drums13" method="_on_Drums_pressed"]
+[connection signal="pressed" from="Drums/Drums14" to="Drums/Drums14" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums14/Drums14" to="." method="_on_Drums14_finished"]
+[connection signal="pressed" from="Drums/Drums15" to="Drums/Drums15" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums15/Drums15" to="." method="_on_Drums15_finished"]
+[connection signal="pressed" from="Drums/Drums16" to="Drums/Drums16" method="_on_Drums_pressed"]
+[connection signal="pressed" from="Drums/Drums17" to="Drums/Drums17" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums17/Drums17" to="." method="_on_Drums17_finished"]
+[connection signal="pressed" from="Drums/Drums18" to="Drums/Drums18" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums18/Drums18" to="." method="_on_Drums18_finished"]
+[connection signal="pressed" from="Drums/Drums19" to="Drums/Drums19" method="_on_Drums_pressed"]
+[connection signal="finished" from="Drums/Drums19/Drums19" to="." method="_on_Drums19_finished"]
+[connection signal="pressed" from="Drums/Drums20" to="Drums/Drums20" method="_on_Drums_pressed"]
+[connection signal="pressed" from="SynthChord/LABEL" to="SynthChord" method="_on_LABEL_pressed"]
+[connection signal="pressed" from="SynthChord/SynthChord1" to="SynthChord/SynthChord1" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord1/SynthChord1" to="." method="_on_SynthChord1_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord2" to="SynthChord/SynthChord2" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord2/SynthChord2" to="." method="_on_SynthChord2_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord3" to="SynthChord/SynthChord3" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord3/SynthChord3" to="." method="_on_SynthChord3_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord4" to="SynthChord/SynthChord4" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord4/SynthChord4" to="." method="_on_SynthChord4_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord5" to="SynthChord/SynthChord5" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord5/SynthChord5" to="." method="_on_SynthChord5_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord6" to="SynthChord/SynthChord6" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord6/SynthChord6" to="." method="_on_SynthChord6_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord7" to="SynthChord/SynthChord7" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord7/SynthChord7" to="." method="_on_SynthChord7_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord8" to="SynthChord/SynthChord8" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord8/SynthChord8" to="." method="_on_SynthChord8_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord9" to="SynthChord/SynthChord9" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord9/SynthChord9" to="." method="_on_SynthChord9_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord10" to="SynthChord/SynthChord10" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord10/SynthChord10" to="." method="_on_SynthChord10_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord11" to="SynthChord/SynthChord11" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord11/SynthChord11" to="." method="_on_SynthChord11_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord12" to="SynthChord/SynthChord12" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord12/SynthChord12" to="." method="_on_SynthChord12_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord13" to="SynthChord/SynthChord13" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord13/SynthChord13" to="." method="_on_SynthChord13_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord14" to="SynthChord/SynthChord14" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord14/SynthChord14" to="." method="_on_SynthChord14_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord15" to="SynthChord/SynthChord15" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord15/SynthChord15" to="." method="_on_SynthChord15_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord16" to="SynthChord/SynthChord16" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord16/SynthChord16" to="." method="_on_SynthChord16_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord17" to="SynthChord/SynthChord17" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord17/SynthChord17" to="." method="_on_SynthChord17_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord18" to="SynthChord/SynthChord18" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord18/SynthChord18" to="." method="_on_SynthChord18_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord19" to="SynthChord/SynthChord19" method="_on_SynthChord_pressed"]
+[connection signal="finished" from="SynthChord/SynthChord19/SynthChord19" to="." method="_on_SynthChord19_finished"]
+[connection signal="pressed" from="SynthChord/SynthChord20" to="SynthChord/SynthChord20" method="_on_SynthChord_pressed"]
+[connection signal="pressed" from="Play" to="." method="_on_Play_pressed"]
+[connection signal="pressed" from="Stop" to="." method="_on_Stop_pressed"]

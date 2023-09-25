@@ -1,0 +1,15 @@
+[remap]
+
+importer="ogg_vorbis"
+type="AudioStreamOGGVorbis"
+path="res://.import/segment_80000_88000.ogg-67cb95d47e62b252c37b83080aef57a9.oggstr"
+
+[deps]
+
+source_file="res://Bass/segment_80000_88000.ogg"
+dest_files=[ "res://.import/segment_80000_88000.ogg-67cb95d47e62b252c37b83080aef57a9.oggstr" ]
+
+[params]
+
+loop=false
+loop_offset=0

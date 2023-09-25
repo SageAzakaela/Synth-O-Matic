@@ -1,0 +1,15 @@
+[remap]
+
+importer="ogg_vorbis"
+type="AudioStreamOGGVorbis"
+path="res://.import/segment_80000_88000.ogg-aab0baa648b8077c51d853843afa5283.oggstr"
+
+[deps]
+
+source_file="res://SynthChord/segment_80000_88000.ogg"
+dest_files=[ "res://.import/segment_80000_88000.ogg-aab0baa648b8077c51d853843afa5283.oggstr" ]
+
+[params]
+
+loop=false
+loop_offset=0
