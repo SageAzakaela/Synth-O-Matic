@@ -1,3 +1,19 @@
 So to use the loop trimmer, I use visual studio code and just run it in the terminal.
 
 You'll need to adjust the time in miliseconds for it to cut the loop from a bigger wav file, and then define a name for it's output folder
+
+
+for example, 4 bars at 120 bpm is exactly 8 seconds, or 8000 miliseconds.
+
+How do we get this number?
+
+There's 60,000ms in a minute. So we divide that by our BPM -- Assuming we're in 4/4 time, we multiply this by the number of measures in one bar.
+
+Then we multiply by how many bars we want our loop to be (Usually 4 or 8)
+
+
+so here's the equation for calculating 4 bars of music if you're in 4/4, if you're in 3/4 then you change the number of measures to 3.
+
+
+Duration of 4 bars = ((60,000 ms / X BPM) * 4 Measures) * 4 Bars
+
